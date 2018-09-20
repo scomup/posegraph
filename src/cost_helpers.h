@@ -20,49 +20,35 @@
 #include "Eigen/Core"
 #include "Eigen/Geometry"
 #include "rigid_transform.h"
-#include "transform.h"
 
 namespace sample_carto {
 namespace core {
 namespace optimization {
 
-// Computes the error between the given relative pose and the difference of
-// poses 'start' and 'end' which are both in an arbitrary common frame.
-//
-// 'start' and 'end' poses have the format [x, y, rotation].
-/*
-template <typename T>
-static std::array<T, 3> ComputeUnscaledError(
-    const transform::Rigid2d &relative_pose, const T *const start,
-    const T *const end){
-    const T cos_theta_i = cos(start[2]);
-    const T sin_theta_i = sin(start[2]);
-    const T delta_x = end[0] - start[0];
-    const T delta_y = end[1] - start[1];
-    const T h[3] = {cos_theta_i * delta_x + sin_theta_i * delta_y,
-                    -sin_theta_i * delta_x + cos_theta_i * delta_y,
-                    end[2] - start[2]};
-    return {{T(relative_pose.translation().x()) - h[0],
-             T(relative_pose.translation().y()) - h[1],
-             common::NormalizeAngleDifference(
-                 T(relative_pose.rotation().angle()) - h[2])}};
-};
 
 template <typename T>
-std::array<T, 3> ScaleError(const std::array<T, 3> &error,
-                            double translation_weight, double rotation_weight){
-    // clang-format off
-  return {{
-      error[0] * translation_weight,
-      error[1] * translation_weight,
-      error[2] * translation_weight,
-      error[3] * rotation_weight,
-      error[4] * rotation_weight,
-      error[5] * rotation_weight
-  }};
+Eigen::Matrix<T, 3, 1> RotationQuaternionToAngleAxisVector(
+    const Eigen::Quaternion<T>& quaternion) {
+  Eigen::Quaternion<T> normalized_quaternion = quaternion.normalized();
+  // We choose the quaternion with positive 'w', i.e., the one with a smaller
+  // angle that represents this orientation.
+  if (normalized_quaternion.w() < 0.) {
+    // Multiply by -1. http://eigen.tuxfamily.org/bz/show_bug.cgi?id=560
+    normalized_quaternion.w() *= T(-1.);
+    normalized_quaternion.x() *= T(-1.);
+    normalized_quaternion.y() *= T(-1.);
+    normalized_quaternion.z() *= T(-1.);
+  }
+  // We convert the normalized_quaternion into a vector along the rotation axis
+  // with length of the rotation angle.
+  const T angle = T(2.) * atan2(normalized_quaternion.vec().norm(),
+                                normalized_quaternion.w());
+  constexpr double kCutoffAngle = 1e-7;  // We linearize below this angle.
+  const T scale = angle < kCutoffAngle ? T(2.) : angle / sin(angle / T(2.));
+  return Eigen::Matrix<T, 3, 1>(scale * normalized_quaternion.x(),
+                                scale * normalized_quaternion.y(),
+                                scale * normalized_quaternion.z());
 }
-*/
-// clang-format on
 
 template <typename T>
 static std::array<T, 6> ComputeUnscaledError(
@@ -85,7 +71,7 @@ static std::array<T, 6> ComputeUnscaledError(
                            start_rotation[2], start_rotation[3]);
 
   const Eigen::Matrix<T, 3, 1> angle_axis_difference =
-      transform::RotationQuaternionToAngleAxisVector(
+      RotationQuaternionToAngleAxisVector(
           h_rotation_inverse * relative_pose.rotation().cast<T>());
 
   return {{T(relative_pose.translation().x()) - h_translation[0],
@@ -112,102 +98,6 @@ std::array<T, 6> ScaleError(const std::array<T, 6>& error,
 
 
 
-// Computes spherical linear interpolation of unit quaternions.
-//
-// 'start' and 'end' are quaternions in the format [w, n_1, n_2, n_3].
-template <typename T>
-std::array<T, 4> SlerpQuaternions(const T* const start, const T* const end,
-                                  double factor) {
-  // Angle 'theta' is the half-angle "between" quaternions. It can be computed
-  // as the arccosine of their dot product.
-  const T cos_theta = start[0] * end[0] + start[1] * end[1] +
-                      start[2] * end[2] + start[3] * end[3];
-  // Avoid using ::abs which would cast to integer.
-  const T abs_cos_theta = ceres::abs(cos_theta);
-  // If numerical error brings 'cos_theta' outside [-1 + epsilon, 1 - epsilon]
-  // interval, then the quaternions are likely to be collinear.
-  T prev_scale(1. - factor);
-  T next_scale(factor);
-  if (abs_cos_theta < T(1. - 1e-5)) {
-    const T theta = acos(abs_cos_theta);
-    const T sin_theta = sin(theta);
-    prev_scale = sin((1. - factor) * theta) / sin_theta;
-    next_scale = sin(factor * theta) / sin_theta;
-  }
-  if (cos_theta < T(0.)) {
-    next_scale = -next_scale;
-  }
-  return {{prev_scale * start[0] + next_scale * end[0],
-           prev_scale * start[1] + next_scale * end[1],
-           prev_scale * start[2] + next_scale * end[2],
-           prev_scale * start[3] + next_scale * end[3]}};
-}
-
-
-// Interpolates 3D poses. Linear interpolation is performed for translation and
-// spherical-linear one for rotation.
-template <typename T>
-std::tuple<std::array<T, 4> /* rotation */, std::array<T, 3> /* translation */>
-InterpolateNodes3D(const T* const prev_node_rotation,
-                   const T* const prev_node_translation,
-                   const T* const next_node_rotation,
-                   const T* const next_node_translation,
-                   const double interpolation_parameter) {
-  return std::make_tuple(
-      SlerpQuaternions(prev_node_rotation, next_node_rotation,
-                       interpolation_parameter),
-      std::array<T, 3>{
-          {prev_node_translation[0] +
-               interpolation_parameter *
-                   (next_node_translation[0] - prev_node_translation[0]),
-           prev_node_translation[1] +
-               interpolation_parameter *
-                   (next_node_translation[1] - prev_node_translation[1]),
-           prev_node_translation[2] +
-               interpolation_parameter *
-                   (next_node_translation[2] - prev_node_translation[2])}});
-};
-
-
-// Embeds 2D poses into 3D and interpolates them. Linear interpolation is
-// performed for translation and spherical-linear one for rotation.
-template <typename T>
-std::tuple<std::array<T, 4> /* rotation */, std::array<T, 3> /* translation */>
-InterpolateNodes2D(const T* const prev_node_pose,
-                   const Eigen::Quaterniond& prev_node_gravity_alignment,
-                   const T* const next_node_pose,
-                   const Eigen::Quaterniond& next_node_gravity_alignment,
-                   const double interpolation_parameter) {
-  // The following is equivalent to (Embed3D(prev_node_pose) *
-  // Rigid3d::Rotation(prev_node_gravity_alignment)).rotation().
-  const Eigen::Quaternion<T> prev_quaternion(
-      (Eigen::AngleAxis<T>(prev_node_pose[2], Eigen::Matrix<T, 3, 1>::UnitZ()) *
-       prev_node_gravity_alignment.cast<T>())
-          .normalized());
-  const std::array<T, 4> prev_node_rotation = {
-      {prev_quaternion.w(), prev_quaternion.x(), prev_quaternion.y(),
-       prev_quaternion.z()}};
-
-  // The following is equivalent to (Embed3D(next_node_pose) *
-  // Rigid3d::Rotation(next_node_gravity_alignment)).rotation().
-  const Eigen::Quaternion<T> next_quaternion(
-      (Eigen::AngleAxis<T>(next_node_pose[2], Eigen::Matrix<T, 3, 1>::UnitZ()) *
-       next_node_gravity_alignment.cast<T>())
-          .normalized());
-  const std::array<T, 4> next_node_rotation = {
-      {next_quaternion.w(), next_quaternion.x(), next_quaternion.y(),
-       next_quaternion.z()}};
-
-  return std::make_tuple(
-      SlerpQuaternions(prev_node_rotation.data(), next_node_rotation.data(),
-                       interpolation_parameter),
-      std::array<T, 3>{
-          {prev_node_pose[0] + interpolation_parameter *
-                                   (next_node_pose[0] - prev_node_pose[0]),
-           prev_node_pose[1] + interpolation_parameter *
-                                   (next_node_pose[1] - prev_node_pose[1]),
-           T(0)}});
-};
 
 }  // namespace optimization
 }  // namespace core

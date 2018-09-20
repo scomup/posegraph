@@ -6,9 +6,10 @@
 #include "spa_cost_function_3d.h"
 #include "csv.h"
 #include "ceres_pose.h"
-#include "make_unique.h"
 
 using namespace sample_carto;
+
+
 
 std::vector<transform::Rigid3d> readNodes(std::string filename)
 {
@@ -29,7 +30,7 @@ std::vector<transform::Rigid3d> readNodes(std::string filename)
 
 int main()
 {
-    auto nodes = readNodes("node0.csv");
+    auto nodes = readNodes("/home/liu/workspace/posegraph/build/node0.csv");
     std::vector<core::Constraint> constraints;
     for ( auto i = 0; i < (int)nodes.size() - 1; i++){
         transform::Rigid3d& current_node = nodes[i];
@@ -47,16 +48,19 @@ int main()
     ceres::Problem::Options problem_options;
     ceres::Problem problem(problem_options);
 
-    std::map<int, core::optimization::CeresPose> C_nodes;
-
+    std::vector<CeresPose> c_nodes;
     for (auto i = 0; i < (int)nodes.size() ; i++)
     {
-        C_nodes.emplace(
-            i,
-            core::optimization::CeresPose(nodes[i], nullptr,
-                      common::make_unique<ceres::QuaternionParameterization>(),
-                      &problem));
+        ceres::LocalParameterization *local_parameterization = new ceres::QuaternionParameterization();
+        CeresPose pose(nodes[i]);
+        c_nodes.emplace_back(nodes[i]);
+        
+        problem.AddParameterBlock(c_nodes[i].data().translation.data(), 3,
+                                nullptr);
+        problem.AddParameterBlock(c_nodes[i].data().rotation.data(), 4,
+                                local_parameterization);
     }
+    
 
     for (const auto &constraint : constraints)
     {
@@ -65,11 +69,11 @@ int main()
             // Only loop closure constraints should have a loss function.
             constraint.tag == core::Constraint::INTER_SUBMAP
                 ? new ceres::HuberLoss(100)
-                : nullptr /* loss function */,
-            C_nodes.at(constraint.id0).rotation(),
-            C_nodes.at(constraint.id0).translation(),
-            C_nodes.at(constraint.id1).rotation(),
-            C_nodes.at(constraint.id1).translation());
+                : nullptr ,
+            c_nodes[constraint.id0].data().rotation.data(),
+            c_nodes[constraint.id0].data().translation.data(),
+            c_nodes[constraint.id1].data().rotation.data(),
+            c_nodes[constraint.id1].data().translation.data());
     }
       // Solve.
   ceres::Solver::Options options;
@@ -80,15 +84,17 @@ int main()
   ceres::Solver::Summary summary;
   ceres::Solve(options, &problem, &summary);
 
-  std::ofstream outputfile("node1.csv");
+  //std::ofstream outputfile("node1.csv");
 
-  for (auto node : C_nodes){
-      auto new_node =  node.second.ToRigid();
+  for (auto node : c_nodes){
+      std::cout<<node.ToRigid()<<"\n";
+      //auto new_node =  node.second.ToRigid();
       //nodes[i] = C_nodes[i].ToRigid();
-      std::cout<<"before:"<< nodes[node.first].translation()<<std::endl <<"after:"<< new_node.translation()<<std::endl<<std::endl;
-      outputfile << new_node.translation().x()<<", "<< new_node.translation().y()<<", "<< new_node.translation().z()<<"\n";
+      //std::cout<<"before:"<< nodes[node.first].translation()<<std::endl <<"after:"<< new_node.translation()<<std::endl<<std::endl;
+      //outputfile << new_node.translation().x()<<", "<< new_node.translation().y()<<", "<< new_node.translation().z()<<"\n";
   }
-  outputfile.close();
+  
+  //outputfile.close();
 
   
 

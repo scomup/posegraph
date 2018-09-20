@@ -23,7 +23,6 @@
 #include "Eigen/Geometry"
 #include "math.h"
 #include "rigid_transform.h"
-#include "transform.h"
 #include "ceres/ceres.h"
 #include "ceres/jet.h"
 #include "constraints.h"
