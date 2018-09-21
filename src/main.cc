@@ -1,101 +1,108 @@
-#include<iostream>
-#include<fstream>
+#include <iostream>
+#include <fstream>
+#include <chrono>
+#include <thread>
 
 #include "rigid_transform.h"
-#include "constraints.h"
-#include "spa_cost_function_3d.h"
-#include "csv.h"
+#include "edge.h"
+#include "edge_cost.h"
+#include "g2o_io.h"
 #include "ceres_pose.h"
+#include "viewer/viewer.h"
+
 
 using namespace sample_carto;
 
 
-
-std::vector<transform::Rigid3d> readNodes(std::string filename)
+int main(int argc, char** argv)
 {
-    std::ifstream file(filename);
-    CSVRow row;
 
-    std::vector<transform::Rigid3d> nodes;
-    while (file >> row)
+    std::string filename;
+    if (argc >= 2)
     {
-        double x = std::stod(row[0]);
-        double y = std::stod(row[1]);
-        double z = std::stod(row[2]);
-        double yaw = std::stod(row[3]);
-        nodes.emplace_back(Eigen::Vector3d(x, y, z), transform::RollPitchYaw(0, 0, yaw));
+        filename = argv[1];
     }
-    return nodes;
-}
+    else
+    {
+        std::cout << "No input file!" << std::endl;
+        return 0;
+    }
 
-int main()
-{
-    auto nodes = readNodes("/home/liu/workspace/posegraph/build/node0.csv");
-    std::vector<core::Constraint> constraints;
-    for ( auto i = 0; i < (int)nodes.size() - 1; i++){
-        transform::Rigid3d& current_node = nodes[i];
-        transform::Rigid3d& next_node = nodes[i+1];
+    G2OFile g2odata(filename);
+    auto nodes = g2odata.nodes();
+    auto edges = g2odata.edges();
+
+    //Create edges for two adjacent edges.
+    for (auto i = 0; i < (int)nodes.size() - 1; i++)
+    {
+        transform::Rigid3d &current_node = nodes[i];
+        transform::Rigid3d &next_node = nodes[i + 1];
         transform::Rigid3d transfom_cur_to_nxt = current_node.inverse() * next_node;
-        constraints.push_back(core::Constraint{i, i+1,
-                                               core::Constraint::Pose{transfom_cur_to_nxt, 1, 10},
-                                               core::Constraint::Tag::INTER_SUBMAP});
+        edges.push_back(Edge{i, i + 1,
+                                               Edge::Pose{transfom_cur_to_nxt, 1, 10},
+                                               Edge::Tag::NORMAL});
     }
-    auto transfom_first_to_last = transform::Rigid3d {Eigen::Vector3d(0, 0, 0), transform::RollPitchYaw(0, 0, 0)};
-    constraints.push_back(core::Constraint{0, (int)nodes.size() - 1,
-                                           core::Constraint::Pose{transfom_first_to_last, 1, 10},
-                                           core::Constraint::Tag::INTRA_SUBMAP});
 
     ceres::Problem::Options problem_options;
     ceres::Problem problem(problem_options);
 
-    std::vector<CeresPose> c_nodes;
-    for (auto i = 0; i < (int)nodes.size() ; i++)
+    std::map<int, CeresPose*> c_nodes;
+
+    for (auto i = 0; i < (int)nodes.size(); i++)
     {
-        ceres::LocalParameterization *local_parameterization = new ceres::QuaternionParameterization();
-        CeresPose pose(nodes[i]);
-        c_nodes.emplace_back(nodes[i]);
         
-        problem.AddParameterBlock(c_nodes[i].data().translation.data(), 3,
-                                nullptr);
-        problem.AddParameterBlock(c_nodes[i].data().rotation.data(), 4,
-                                local_parameterization);
+        ceres::LocalParameterization *local_parameterization = new ceres::QuaternionParameterization();
+        CeresPose* ceres_pose =  new CeresPose(nodes[i]);
+        c_nodes.emplace(i, ceres_pose);
+        problem.AddParameterBlock(c_nodes[i]->data().translation.data(), 3,
+                                  nullptr);
+        problem.AddParameterBlock(c_nodes[i]->data().rotation.data(), 4,
+                                  local_parameterization);
     }
-    
 
-    for (const auto &constraint : constraints)
+    for (const auto &edge : edges)
     {
+
+        ceres::CostFunction *cost =
+            new ceres::AutoDiffCostFunction<EdgeCost, 6, 4, 3, 4, 3>(
+                new EdgeCost(edge.pose));
         problem.AddResidualBlock(
-            core::optimization::SpaCostFunction3D::CreateAutoDiffCostFunction(constraint.pose),
-            // Only loop closure constraints should have a loss function.
-            constraint.tag == core::Constraint::INTER_SUBMAP
+            cost,
+            edge.tag == Edge::LOOP_CLOSING
                 ? new ceres::HuberLoss(100)
-                : nullptr ,
-            c_nodes[constraint.id0].data().rotation.data(),
-            c_nodes[constraint.id0].data().translation.data(),
-            c_nodes[constraint.id1].data().rotation.data(),
-            c_nodes[constraint.id1].data().translation.data());
+                : nullptr,
+            c_nodes[edge.i]->data().rotation.data(),
+            c_nodes[edge.i]->data().translation.data(),
+            c_nodes[edge.j]->data().rotation.data(),
+            c_nodes[edge.j]->data().translation.data());
     }
-      // Solve.
-  ceres::Solver::Options options;
-  options.use_nonmonotonic_steps = true;
-  options.max_num_iterations = 10;
-  options.num_threads = 1;
+    // Solve.
+    ceres::Solver::Options options;
+    options.use_nonmonotonic_steps = true;
+    options.max_num_iterations = 10;
+    options.num_threads = 1;
 
-  ceres::Solver::Summary summary;
-  ceres::Solve(options, &problem, &summary);
+    ceres::Solver::Summary summary;
 
-  //std::ofstream outputfile("node1.csv");
+    std::cout<<"Number of nodes:"<<nodes.size()<<"\n";
+    std::cout<<"Number of edges:"<<edges.size()<<"\n";
+    std::cout<<"Try to solve...\n";
 
-  for (auto node : c_nodes){
-      std::cout<<node.ToRigid()<<"\n";
-      //auto new_node =  node.second.ToRigid();
-      //nodes[i] = C_nodes[i].ToRigid();
-      //std::cout<<"before:"<< nodes[node.first].translation()<<std::endl <<"after:"<< new_node.translation()<<std::endl<<std::endl;
-      //outputfile << new_node.translation().x()<<", "<< new_node.translation().y()<<", "<< new_node.translation().z()<<"\n";
-  }
-  
-  //outputfile.close();
+    ceres::Solve(options, &problem, &summary);
+    std::cout<<"Oh yeah! we did it!\n";
+    std::map<int, sample_carto::transform::Rigid3d> new_nodes;
 
-  
+    for (auto node : c_nodes)
+    {
+        auto new_node =  node.second->ToRigid();
+        //std::cout << new_node << "\n";
+        new_nodes[node.first] = new_node;
+    }
 
+    auto viewer = new Viewer();
+    auto viewer_thread = std::thread(&Viewer::Run, viewer);
+    viewer->UpdateNodes(nodes, 0);
+    viewer->UpdateNodes(new_nodes, 1);
+    viewer->UpdateEdges(edges);
+    viewer_thread.join();
 }

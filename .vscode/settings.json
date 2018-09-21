@@ -47,6 +47,7 @@
         "typeindex": "cpp",
         "typeinfo": "cpp",
         "utility": "cpp",
-        "core": "cpp"
+        "core": "cpp",
+        "mutex": "cpp"
     }
 }

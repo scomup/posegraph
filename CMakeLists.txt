@@ -2,20 +2,17 @@ cmake_minimum_required(VERSION 2.8.12)  # Ships with Ubuntu 14.04 (Trusty)
 
 project(pose_graph)
 
-set(CMAKE_BUILD_TYPE Debug)
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c++11 -Wall  -O0 -march=native ")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -Wall   -O0 -march=native")
-
 #set(CMAKE_BUILD_TYPE Debug)
-#set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c++11 -Wall  -O0")
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -Wall  -O0")
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -Wall   -O0)
+
+set(CMAKE_BUILD_TYPE Release)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -Wall  -O3")
 
 
 find_package(Boost REQUIRED COMPONENTS iostreams)
 find_package(Ceres REQUIRED COMPONENTS SparseLinearAlgebraLibrary)
 find_package(Eigen3 REQUIRED)
-find_package(Protobuf REQUIRED)
-find_package(PCL 1.2 REQUIRED)
+find_package(Pangolin REQUIRED)
 
 #find_package(Lua REQUIRED)
 set(LUA_INCLUDE_DIR /usr/include/lua5.2)
@@ -30,10 +27,9 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 include_directories(${EIGEN3_INCLUDE_DIR})
 include_directories(${PROJECT_BINARY_DIR})
 include_directories(${Boost_INCLUDE_DIRS})
-include_directories(${PCL_INCLUDE_DIRS})
 include_directories(${catkin_INCLUDE_DIRS})
-include_directories(${LUA_INCLUDE_DIR})
 include_directories(${CERES_INCLUDE_DIRS})
+include_directories(${Pangolin_INCLUDE_DIRS})
 file(GLOB_RECURSE ALL_SRCS "*.cc")
 
 
@@ -45,8 +41,8 @@ target_link_libraries(${PROJECT_NAME}
 ${LUA_LIBRARIES}
 ${catkin_LIBRARIES}
 ${Boost_LIBRARIES}
-${PCL_LIBRARIES}
 ${CERES_LIBRARIES}
+${Pangolin_LIBRARIES}
 dl
 )
 
