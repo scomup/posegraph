@@ -25,7 +25,8 @@ int main(int argc, char** argv)
     else
     {
         std::cout << "No input file!" << std::endl;
-        return 0;
+        filename = std::string("/home/liu/workspace/posegraph/datasets/torus3D.g2o");
+        //return 0;
     }
 
     G2OFile g2odata(filename);
@@ -33,6 +34,7 @@ int main(int argc, char** argv)
     auto edges = g2odata.edges();
 
     //Create edges for two adjacent edges.
+    /*
     for (auto i = 0; i < (int)nodes.size() - 1; i++)
     {
         transform::Rigid3d &current_node = nodes[i];
@@ -41,7 +43,7 @@ int main(int argc, char** argv)
         edges.push_back(Edge{i, i + 1,
                                                Edge::Pose{transfom_cur_to_nxt, 1, 10},
                                                Edge::Tag::NORMAL});
-    }
+    }*/
 
     ceres::Problem::Options problem_options;
     ceres::Problem problem(problem_options);

@@ -24,6 +24,11 @@ class G2OFile
         {
             v.push_back(buffer);
         }
+        v.erase(
+            std::remove_if(
+                v.begin(), v.end(),
+                [](std::string str) { return str == std::string(""); }),
+            v.end());
         return v;
     }
 
@@ -51,6 +56,21 @@ class G2OFile
                 nodes_[id] = sample_carto::transform::Rigid3d(Eigen::Vector3d(x, y, z),
                                                               sample_carto::transform::RollPitchYaw(0, 0, yaw));
             }
+            else if (v[0] == "VERTEX_SE3:QUAT")
+            {
+                int id = std::stod(v[1]);
+                double x = std::stod(v[2]);
+                double y = std::stod(v[3]);
+                double z = std::stod(v[4]);
+                double qx = std::stod(v[5]);
+                double qy = std::stod(v[6]);
+                double qz = std::stod(v[7]);
+                double qw = std::stod(v[8]);
+
+                nodes_[id] = sample_carto::transform::Rigid3d(Eigen::Vector3d(x, y, z),
+                                                              Eigen::Quaterniond(qw, qx, qy, qz));
+            }
+
             else if (v[0] == "EDGE_SE2")
             {
                 int id_i = std::stod(v[1]);
@@ -63,6 +83,23 @@ class G2OFile
                                                              sample_carto::transform::RollPitchYaw(0, 0, yaw));
                 edges_.push_back(Edge{id_i, id_j,
                                             Edge::Pose{transfom_ij, 1, 10},
+                                            Edge::Tag::LOOP_CLOSING});
+            }
+            else if (v[0] == "EDGE_SE3:QUAT")
+            {
+                int id_i = std::stod(v[1]);
+                int id_j = std::stod(v[2]);
+                double x = std::stod(v[3]);
+                double y = std::stod(v[4]);
+                double z = std::stod(v[5]);;
+                double qx = std::stod(v[6]);
+                double qy = std::stod(v[7]);
+                double qz = std::stod(v[8]);
+                double qw = std::stod(v[9]);
+                sample_carto::transform::Rigid3d transfom_ij(Eigen::Vector3d(x, y, z),
+                                                             Eigen::Quaterniond(qw, qx, qy, qz));
+                edges_.push_back(Edge{id_i, id_j,
+                                            Edge::Pose{transfom_ij, 1, 5},
                                             Edge::Tag::LOOP_CLOSING});
             }
             else
